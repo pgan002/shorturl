@@ -1,10 +1,56 @@
-import flask
+import random
+import string
+
+from flask import abort, jsonify, redirect, request, Response
 
 from . import app
+from .db.sqlite import SqliteDB
+
+
+AUTH_TOKEN_LEN = app.config.get('AUTH_TOKEN_LEN')
+MAX_ID_LEN = app.config.get('MAX_ID_LEN')
+ID_ALPHABET = string.ascii_letters + string.digits
+
+
+def _create_id():
+    db = SqliteDB()
+    for length in range(1, MAX_ID_LEN):
+        for _ in range(len(ID_ALPHABET) ** length):
+            id_ = ''.join(random.choice(ID_ALPHABET) for _ in range(length))
+            url, _ = db.get_url_and_token(id_)
+            if not url:
+                return id_
+
+
+def _authorize(id_):
+    db = SqliteDB()
+    url, token = db.get_url_and_token(id_)
+    if not url:
+        abort(404, 'No such ID')
+
+    supplied_token = request.headers.get('Authorization')
+    if not supplied_token:
+        abort(400, 'Required authorization header')
+
+    if supplied_token != token:
+        abort(403, 'Incorrect authorization token')
+
+
+def _validate_new_id(id_):
+    db = SqliteDB()
+    if not 1 <= len(id_) <= MAX_ID_LEN:
+        abort(400, 'ID must be 1 to %s characters long' % MAX_ID_LEN)
+
+    if any(c not in ID_ALPHABET for c in id_):
+        abort(400, 'ID can contain only characters from %s' % ID_ALPHABET)
+
+    url, _ = db.get_url_and_token(id_)
+    if url:
+        abort(409, 'ID already exists')
 
 
 @app.route('/<urlId>', methods=['GET'])
-def redirect(urlId):
+def redirect_(urlId):
     """ Redirect to the full, target URL for the given `urlId`.
 
     Args:
@@ -15,7 +61,13 @@ def redirect(urlId):
             `Location` header corresponding to the target URL. Otherwise, a
             response with status code `404` and a plain text error message.
     """
-    flask.abort(501, 'Not Implemented!')
+    db = SqliteDB()
+    url, _ = db.get_url_and_token(urlId)
+    if not url:
+        abort(404, 'No such ID')
+
+    db.update_stats(urlId, request.remote_addr)
+    return redirect(url, code=301)
 
 
 @app.route('/<urlId>/stats', methods=['GET'])
@@ -31,7 +83,8 @@ def stats(urlId):
             client IP address. Otherwise, a response with status code `403` or
             `404` and a plain text error message.
     """
-    flask.abort(501, 'Not Implemented!')
+    _authorize(urlId)
+    return jsonify(SqliteDB().get_stats(urlId))
 
 
 @app.route('/<urlId>', methods=['DELETE'])
@@ -46,7 +99,9 @@ def delete(urlId):
             Otherwise, a response with status code `403` or `404` and a plain
             text error message.
     """
-    flask.abort(501, 'Not Implemented!')
+    _authorize(urlId)
+    SqliteDB().delete_url(urlId)
+    return Response(status=204)
 
 
 @app.route('/create', methods=['POST'])
@@ -59,4 +114,18 @@ def create():
             Otherwise, a response with status code `400` and a plain text error
             message.
     """
-    flask.abort(501, 'Not Implemented!')
+    id_ = request.json.get('id')
+    if id_ is not None:
+        _validate_new_id(id_)
+    else:
+        id_ = _create_id()
+
+    url = request.json.get('url')
+    if not url:
+        abort('400', 'Required body key "url"')
+
+    token = ''.join(random.choice(string.printable)
+                    for _ in range(AUTH_TOKEN_LEN))
+
+    SqliteDB().add_url(id_, url, token)
+    return Response()

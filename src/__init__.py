@@ -1,5 +1,6 @@
 from flask import Flask
 
+
 def init_app():
     """Initialize the Flask application.
 
