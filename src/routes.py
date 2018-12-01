@@ -13,6 +13,14 @@ ID_ALPHABET = string.ascii_letters + string.digits
 
 
 def _create_id():
+    """Create a new ID (short URL) at random (as per specification).
+    Repeatedly try short strings and increase the length if there are collisions
+    with existing IDs. This function can take a long time when most short
+    IDs are already allocated.
+
+    Return:
+        New unique URL ID
+    """
     db = SqliteDB()
     for length in range(1, MAX_ID_LEN):
         for _ in range(len(ID_ALPHABET) ** length):
@@ -23,6 +31,24 @@ def _create_id():
 
 
 def _authorize(id_):
+    """Verify that the given URL ID is in the database and matches the
+    authorization token given in the HTTP request header.
+
+    Returns:
+        A flask.Response with HTTP status code 404 (Not found) if the ID is not
+        in the database
+
+        A flask.Response with HTTP status code 400 (Bad request) if no
+        authorization header was provided
+
+        A flask.Response with HTTP status code 403 (Forbidden) if the
+        authorization token does not match the token corresponding to the ID
+
+        None otherwise
+
+    Args:
+        id_ (str): URL ID to check
+    """
     db = SqliteDB()
     url, token = db.get_url_and_token(id_)
     if not url:
@@ -37,6 +63,20 @@ def _authorize(id_):
 
 
 def _validate_new_id(id_):
+    """Check that the given URL ID has appropriate length and character set
+    and does not already exist in the database.
+
+    Returns:
+        A flask.Response with HTTP status 400 (Bad requrest) if the ID is too
+        long or includes forbidden characters
+
+
+        Aflask.Response with HTTP status code 409 (Conflict) if the ID already
+        exists
+
+        None otherwise
+    respond with the appropriate HTTP response code.
+    """
     db = SqliteDB()
     if not 1 <= len(id_) <= MAX_ID_LEN:
         abort(400, 'ID must be 1 to %s characters long' % MAX_ID_LEN)
